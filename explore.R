@@ -1,15 +1,25 @@
-########### Exploratory Data Analysis
+###                       ###
+# Exploratory Data Analysis #
+###                       ###
+
+# Tommy Jun (tbj2cu)
+# for SYS 6018: Data Mining
 
 ##########
 # Step 1 #
 ##########
-# Working directory and reading in raw data, general setup
+# Setup prior to running
+
+# Install these packages IF NEEDED
 install.packages("tm", "tidyverse", "parallel", "snow", "SnowballC","e1071","glmnet")
+
+# Some parallel computing things. These may not be used if not required
 library(parallel)
 library(snow)
 detectCores()
 cls = snow::makeCluster(detectCores(), "SOCK")
 
+# General use package
 library(tidyverse)
 
 # Set this to the parent directory of where all your files are stored
@@ -28,9 +38,6 @@ test = read.csv("Original Files/test.csv")
 # Check for missing values
 missing.train = sapply(train, function(x) length(which(is.na(x))))
 data.frame(missing.train[missing.train>0])
-
-missing.test = sapply(test, function(x) length(which(is.na(x))))
-data.frame(missing.test[missing.test>0])
 # Nothing is missing. Good!
 
 # Check the names of the columns
@@ -77,14 +84,14 @@ abline(0,1)
 # It seems that there was random sampling between the training and test
 # sets. Maybe the max number is the sum of train and test?
 
+# Check the dimensionality of the datasets
 dim(train)[1]+dim(test)[1]
 # [1] 681284
 max(train$post.id)
 # [1] 681161
 max(test$post.id)
 # [1] 681284
-
-# Yes, this is exactly what happened.
+# Yes, this is exactly what happened
 
 # Another thing to check with date data is to see if it's correctly formatted as
 # a date instead of a string
@@ -104,6 +111,7 @@ dim(train[grepl(",,", train$date),])
 # English
 eng = c("january", "february", "march", "april", "may", "june", "july", "august",
         "september", "october", "november", "december")
+# Additional languages attempted but not worth the effort
 # # Spanish
 # esp = c("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
 #         "septiembre", "octubre", "noviembre", "diciembre")
@@ -123,7 +131,7 @@ eng = c("january", "february", "march", "april", "may", "june", "july", "august"
 # Standardize to lower-case first
 train$date = tolower(train$date)
 
-# Index includes only english dates entries
+# Index which includes only english dates entries
 index = grepl(paste(eng,collapse="|"), train$date, ignore.case=TRUE)
 train.en=train[index,]
 train.other=train[!index,]
@@ -138,7 +146,7 @@ par(mfrow=c(1,2))
 hist(train.en$age)
 hist(train.other$age)
 # Notice that non-english dates have a higher proportion of sampling
-# with the first two age groups! This could be important
+# with the first two age groups. This may be important?
 
 # Notice that the test has all english dates!
 index2 = grepl(paste(eng,collapse="|"), test$date, ignore.case=TRUE)
@@ -167,7 +175,10 @@ dim(train) == dim(train.new)
 # Error check
 sum(is.na(train.new$date))
 
-# Text
+##########
+# Step 3 #
+##########
+# Basic text cleaning
 
 # First thing, change text into a character variable!
 unlist(lapply(train.new, class))
@@ -180,6 +191,7 @@ library(stringr)
 library(plyr)
 library(SnowballC)
 
+# Setup a temporary dataframe as to not override the old one
 train.clean = train.new
 
 # Trim whitespace
@@ -209,9 +221,6 @@ train.clean$punct = str_count(train.clean$text,"[:punct:]")
 train.clean$text = removePunctuation(train.clean$text)
 # Stem words
 train.clean$text = stemDocument(train.clean$text)
-
-# Write to csv
-write.csv(train.clean, "train_clean.csv",row.names=FALSE)
 
 # Now repeat to test dataset
 test.clean = test
@@ -245,10 +254,11 @@ test.clean$text = removePunctuation(test.clean$text)
 test.clean$text = stemDocument(test.clean$text)
 
 # Write to csv
+write.csv(train.clean, "train_clean.csv",row.names=FALSE)
 write.csv(test.clean, "test_clean.csv",row.names=FALSE)
 
 ##########
-# Step 3 #
+# Step 4 #
 ##########
 # Identifying trends (non-text data)
 
@@ -363,45 +373,49 @@ plot(train.clean$user.id, train.clean$age)
 plot(train.clean$sign, train.clean$age)
 # Pretty evenly distributed. Can't tell much!
 
-# char.1
+# char.1 - total number of characters pre-processing
 
 plot(train.clean$char.1, train.clean$age)
 # Can't tell too much
 
-# char.2
+# char.2 - total number of characters after stopwords removed
+# This is used as a count because of the hypothesis that younger
+# participants use more stopwords as a proportion of their sentences
 
 plot(train.clean$char.2, train.clean$age)
 # Can't tell too much
 
-# char.2/char.1
+# char.2/char.1 - Proprortion remaining after cleaning
 
 plot(train.clean$char.2/(train.clean$char.1+1), train.clean$age)
 # Now we're seeing something.
 gp.3 = aggregate(train.clean$char.2/(train.clean$char.1+1), list(train.clean$age), median)
 plot(gp.3$Group.1, gp.3$x, xlab="Age", ylab="char2/char1")
 
-# num/char.1
+# num prop
 
 plot(train.clean$num/(train.clean$char.1+1), train.clean$age)
 gp.4 = aggregate(train.clean$num/(train.clean$char.1+1), list(train.clean$age), median)
 plot(gp.4$Group.1, gp.4$x, xlab="Age", ylab="Median Propotional Use of Numbers in Post")
 # Maybe a trend in the mean number of numbers used per post?
 
-# upper
+# upper prop
 
 plot(train.clean$upper/(train.clean$char.1+1), train.clean$age)
 gp.5 = aggregate(train.clean$upper/(train.clean$char.1+1), list(train.clean$age), median)
 plot(gp.5$Group.1, gp.5$x, xlab="Age", ylab="Median Proportional Use of Upper-Cased Letters in Post")
 
-# punct
+# punct prop
+
 plot(train.clean$punct/(train.clean$char.1+1), train.clean$age)
 gp.6 = aggregate(train.clean$punct/(train.clean$char.1+1), list(train.clean$age), median)
 plot(gp.6$Group.1, gp.6$x, xlab="Age", ylab="Median Proportional Use of Punctuation in Post")
-# Oh, there definitely is something here
+# Oh, there definitely is something here (I think)
 
-#######
-# Preliminary linear model!
-#######
+##########
+# Step 5 #
+##########
+# Simple Modeling
 
 # Temp df
 df = train.clean
@@ -422,155 +436,25 @@ tst$u = tst$upper/(tst$char.1+1)
 tst$p = tst$punct/(tst$char.1+1)
 tst$text = NULL
 
-# Model 1
-
-model=lm(age~topic+sign+date, data=df)
-anova(model)
-
-pred = predict(model, tst)
-hist(pred)
-
-out = data.frame(user.id=test.clean$user.id, age=pred)
-means = ddply(out, ~user.id, summarise, age=mean(age))
-means$age = round(means$age)
-hist(means$age, breaks=100)
-
-# >=13 and <=17
-means$age[means$age<13] = 13
-means$age[means$age>17 & means$age<20] = 17
-# >=23 and <=27
-means$age[means$age>20 & means$age<23] = 23
-means$age[means$age>27 & means$age<30] = 27
-# >=33 and <=48
-means$age[means$age>30 & means$age<33] = 33
-means$age[means$age>48] = 48
-
-hist(means$age, breaks=100)
-
-write.csv(means, "test_output.csv", row.names = FALSE)
-
-# Model 2
-
-model.2=lm(age~topic+sign+date+ch+n+u+p, data=df)
-anova(model.2)
-
-pred.2 = predict(model.2, tst)
-hist(pred.2)
-
-out = data.frame(user.id=test.clean$user.id, age=pred.2)
-means.2 = ddply(out, ~user.id, summarise, age=mean(age))
-means.2$age = round(means$age)
-hist(means.2$age, breaks=100)
-
-# >=13 and <=17
-means.2$age[means.2$age<13] = 13
-means.2$age[means.2$age>17 & means.2$age<20] = 17
-# >=23 and <=27
-means.2$age[means.2$age>20 & means.2$age<23] = 23
-means.2$age[means.2$age>27 & means.2$age<30] = 27
-# >=33 and <=48
-means.2$age[means.2$age>30 & means.2$age<33] = 33
-means.2$age[means.2$age>48] = 48
-
-hist(means.2$age, breaks=100)
-
-write.csv(means.2, "test_output_2.csv", row.names = FALSE)
-
-# Model 3
-
-# [1] "post.id" "user.id" "gender"  "topic"   "sign"    "date"    "text"    "age"     "char.1"  "char.2"  "num"     "upper"   "punct"  
-
-# Here's a function for mode
-Mode <- function(x) {
-  ux <- unique(x)
-  ux[which.max(tabulate(match(x, ux)))]
-}
-# https://stackoverflow.com/questions/32684931/how-to-aggregate-data-in-r-with-mode-most-common-value-for-each-row
-
-df.agg = data.frame(
-  user.id = aggregate(df$user.id, list(df$user.id), Mode)[,2],
-  age = aggregate(df$age, list(df$user.id), median)[,2],
-  gender = aggregate(df$gender, list(df$user.id), Mode)[,2],
-  topic = aggregate(df$topic, list(df$user.id), Mode)[,2],
-  sign = aggregate(df$sign, list(df$user.id), Mode)[,2],
-  text = as.character(aggregate(df$text, list(df$user.id), function(x) paste(x, sep="", collapse=" "))[,2]),
-  date = aggregate(df$date, list(df$user.id), median)[,2],
-  char.1 = aggregate(df$char.1, list(df$user.id), median)[,2],
-  char.2 = aggregate(df$char.2, list(df$user.id), median)[,2],
-  num = aggregate(df$num, list(df$user.id), median)[,2],
-  upper = aggregate(df$upper, list(df$user.id), median)[,2],
-  punct = aggregate(df$punct, list(df$user.id), median)[,2]
-)
-
-df.agg$text = as.character(df.agg$text)
-df.agg$ch = df.agg$char.2/(df.agg$char.1+1)
-df.agg$n = df.agg$num/(df.agg$char.1+1)
-df.agg$u = df.agg$upper/(df.agg$char.1+1)
-df.agg$p = df.agg$punct/(df.agg$char.1+1)
-
-temp = head(df.agg)
-View(temp)
-
-names(df.agg)
-
-model.3=lm(age~topic+sign+date+num+upper+punct+char.1+char.2+ch+n+u+p,data=df.agg)
-anova(model.3)
-
-# Model selection
-library(randomForest)
-fit = randomForest(age~topic+sign+date+num+upper+punct+char.1+char.2+ch+n+u, data=df.agg, importance=TRUE, ntree=500)
-fit$importance[order(-fit$importance[,1]),]
-
-#             %IncMSE IncNodePurity
-# topic  0.0459995868     404.00401
-# char.1 0.0173464808      97.46159
-# char.2 0.0164612837      95.20468
-# upper  0.0155151918      86.97802
-# punct  0.0135988234     109.91225
-# u      0.0129607156     138.29239
-# num    0.0047914304      38.90674
-# n      0.0038961605      58.55020
-# ch     0.0026711346      96.62709
-# date   0.0009411056      87.10879
-# sign   0.0002106824     117.60989
-
-# It looks like topic, char.1, char.2, upper, punct, and u are good variables
-
-model.4 = lm(age~topic+char.1+char.2+upper+punct+u, data=df.agg)
-pred.4 = predict(model.4, tst)
-hist(exp(pred.4))
-
-out = data.frame(user.id=tst$user.id, age=exp(pred.4))
-means = ddply(out, ~user.id, summarise, age=mean(age))
-means$age = round(means$age)
-hist(means$age, breaks=100)
-
-# >=13 and <=17
-means$age[means$age<13] = 13
-means$age[means$age>17 & means$age<20] = 17
-# >=23 and <=27
-means$age[means$age>20 & means$age<23] = 23
-means$age[means$age>27 & means$age<30] = 37
-# >=33 and <=48
-means$age[means$age>30 & means$age<33] = 33
-means$age[means$age>48] = 48
-
-hist(means$age, breaks=100)
-
-write.csv(means, "test_output_4.csv", row.names = FALSE)
+#
+# Check models in exploreOLD.R that were attempted.
+# They should fit in here
+#
 
 # We will have to use more information. This is going nowhere!
 
 ##########
-# Step 4 #
+# Step 6 #
 ##########
-# TF-IDF Matricies
+# In-depth Text Analsys + Modeling
+
+# Here more advanced methods are used in extracting as much information
+# as possible from the corpus. The first method below is the one
+# provided by the Professor from the lecture.
 
 # Make a temporary dataframe in case for transformations.
 df = train.clean
 dim(df)
-
-### First try out for the entire dataset regardless of age group
 
 # Only need id and strings
 df.str = df[,c("post.id","text")]
@@ -616,6 +500,10 @@ tfidf.95
 
 as.matrix(tfidf.95[1:5, 1:5])
 
+# Other values like 0.70 were tried but 0.95 seemed like a good fit
+# because the table can be filtered down from here. Additionally,
+# since there were 3 groups a value near 1-1/3=0.66 wasn't preferred.
+
 # Append to df to make a super table
 train.idf.95 = df
 train.idf.95$post.id = NULL
@@ -634,67 +522,106 @@ dim(df.95)
 
 names(df.95)
 
-# Tokenize (choose important words)
+# Chose important words (but first cleanup)
 gc()
 names(df.95)
 
+# Separate into three distinct age groups to see which words were
+# the most important in each of the groups
 group.1 = df.95[df$age<3,]
 group.2 = df.95[df$age>3 & df$age<3.4,]
 group.3 = df.95[df$age>3.4,]
 
+# Group 1 (young)
 plot(colSums(group.1[1:2,16:283]))
 n.1=names(group.1)[16:284][colSums(group.1[1:2,16:283])>0.05]
 n.1
 # [1] "found"   "learn"   "now"     "urllink" "wait"
 
+# Group 2 (middle-age)
 plot(colSums(group.2[1:2,16:283]))
 n.2=names(group.2)[16:284][colSums(group.2[1:2,16:283])>0.05]
 n.2
 # [1] "almost" "eat"    "live"   "need"   "never"  "well"   "world" 
 
+# Group 3 (not so middle-age)
 plot(colSums(group.3[1:2,16:283]))
 n.3=names(group.3)[16:284][colSums(group.3[1:2,16:283])>0.05]
 n.3
 # [1] "can"     "cool"    "enjoy"   "hour"    "mean"    "money"   "need"    "now"     "real"   
 # [10] "show"    "thank"   "urllink" "without"
 
+# All of the key words
 key.words = unique(c(n.1,n.2,n.3))
+
+# Since these are the most important words for distinguishing
+# between each of the groups, maybe they can be used in linear
+# regression? As long as they are distinct from one another
+# it should be useful.
+
+# Let's try another method using the text2vec package
 
 # https://cran.r-project.org/web/packages/text2vec/vignettes/text-vectorization.html
 install.packages("text2vec")
 library(text2vec)
 
+# Create a word tokenizer
 it_train=itoken(train.clean$text, tokenizer=word_tokenizer,ids=train.clean$post.id)
+
+# Create the vocabulary
 vocab = create_vocabulary(it_train)
+
+# Vectorize vocabulary
 vectorizer = vocab_vectorizer(vocab)
+
+# Apply to the training data
 dtm_train = create_dtm(it_train, vectorizer)
+
+# Create a framework for TF-IDF
 tfidf = TfIdf$new()
+
+# Fit training data to this TF-IDF framework
 dtm_train_tfidf = fit_transform(dtm_train, tfidf)
+
+# Same to test
 it_test=itoken(test.clean$text, tokenizer=word_tokenizer,ids=test.clean$post.id)
 dtm_test_tfidf = create_dtm(it_test, vectorizer)
 dtm_test_tfidf=transform(dtm_test_tfidf, tfidf)
-glmnet_classifer = cv.glmnet(x=dtm_train_tfidf,y=train.clean$age,
-                             alpha=1,
-                             type.measure="mae")
-plot(glmnet_classifer)
 
-lam=glmnet_classifer$lambda.min
+# Use glm to make a linear model with LASSO regression (alpha=1)
+# This also performs cross-validation and solves for the optimal
+# lambda value. It's a neat package.
+# Calculate the "mae", mean absolute error and optimize for it
+glm_model = cv.glm(x=dtm_train_tfidf,y=train.clean$age,alpha=1,type.measure="mae")
+plot(glm_model)
+
+# Calcualted lambda value
+lam=glm_model$lambda.min
 # [1] 0.0005819068
-coef(glmnet_classifer, s="lambda.min")
-pred=predict(glmnet_classifer,c(123123),s="lambda.min")
-print(glmnet_classifer$glmnet.fit)
-pred=predict(glmnet_classifer, dtm_test_tfidf, type="response", s=lam)
+
+# Coefficients of model given optimal lambda
+coef(glm_model, s="lambda.min")
+print(glm_model$glm.fit)
+
+# Make predictions on the data
+pred=predict(glm_model, dtm_test_tfidf, type="response", s=lam)
+
+# Exponentiate to recover age values
 pred = exp(pred)
+
+# If there are any extreme outliers bring them back into the range
 pred[pred<13] = 13
 pred[pred>48] = 48
 hist(pred)
 
-
+# Return the data frame in the format kaggle likes
 out = data.frame(user.id=tst$user.id, age=pred)
 names(out) = c("user.id", "age")
+# Don't forget to take the mean of estimated ages!
 means = ddply(out, ~user.id, summarise, age=mean(age))
 means$age = round(means$age)
 hist(means$age, breaks=100)
 
+# Write csv.
 write.csv(means, "test_output_6.csv", row.names = FALSE)
-# Best score so far, I'll work on this later
+# Best score so far, I'll work on this later.
