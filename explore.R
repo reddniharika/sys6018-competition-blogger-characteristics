@@ -185,6 +185,31 @@ unlist(lapply(train.new, class))
 train.new$text = as.character(train.new$text)
 class(train.new$text)
 
+## EXPERIMENTAL ##
+# https://m-clark.github.io/text-analysis-with-R/part-of-speech-tagging.html
+# Part of speech tagging
+# Make sure to have Java installed
+install.packages(openNLPmodels.en)
+library("openNLP")
+library("openNLPmodels.en")
+
+count_pos = function(string) {
+  initial_result = string %>% 
+    annotate(list(Maxent_Sent_Token_Annotator(),
+                  Maxent_Word_Token_Annotator())) %>% 
+    annotate(string, Maxent_POS_Tag_Annotator(), .) %>% 
+    subset(type=='word') 
+  
+  sapply(initial_result$features , '[[', "POS") %>% table
+  
+}
+
+count_pos(const)
+
+## END EXPERIMENTAL ##
+
+
+
 # Now clean the text
 library(tm)
 library(stringr)
@@ -405,6 +430,7 @@ plot(train.clean$upper/(train.clean$char.1+1), train.clean$age)
 gp.5 = aggregate(train.clean$upper/(train.clean$char.1+1), list(train.clean$age), median)
 plot(gp.5$Group.1, gp.5$x, xlab="Age", ylab="Median Proportional Use of Upper-Cased Letters in Post")
 
+
 # punct prop
 
 plot(train.clean$punct/(train.clean$char.1+1), train.clean$age)
@@ -427,6 +453,9 @@ df$n = df$num/(df$char.1+1)
 df$u = df$upper/(df$char.1+1)
 df$p = df$punct/(df$char.1+1)
 df$text = NULL
+names(df) = c("post.id.","user.id.","gender.","topic.", "sign.","date.",
+              "age.","char.1.","char.2.","num.","upper.","punct.","ch.",
+              "n.","u.","p.")
 
 # Repeat to test
 tst = test.clean
@@ -435,6 +464,9 @@ tst$n = tst$num/(tst$char.1+1)
 tst$u = tst$upper/(tst$char.1+1)
 tst$p = tst$punct/(tst$char.1+1)
 tst$text = NULL
+names(tst) = c("post.id.","user.id.","gender.","topic.", "sign.","date.",
+                 "char.1.","char.2.","num.","upper.","punct.","ch.",
+                 "n.","u.","p.")
 
 #
 # Check models in exploreOLD.R that were attempted.
@@ -568,11 +600,14 @@ library(text2vec)
 # Create a word tokenizer
 it_train=itoken(train.clean$text, tokenizer=word_tokenizer,ids=train.clean$post.id)
 
-# Create the vocabulary
-vocab = create_vocabulary(it_train)
+# Create the vocabulary - up to 2 ngrams
+vocab = create_vocabulary(it_train, ngram = c(1L, 2L))
+
+# Prune vocabulary
+pruned_vocab = prune_vocabulary(vocab, term_count_min=50, doc_proportion_max=0.40, doc_proportion_min=0.005)
 
 # Vectorize vocabulary
-vectorizer = vocab_vectorizer(vocab)
+vectorizer = vocab_vectorizer(pruned_vocab)
 
 # Apply to the training data
 dtm_train = create_dtm(it_train, vectorizer)
@@ -583,45 +618,73 @@ tfidf = TfIdf$new()
 # Fit training data to this TF-IDF framework
 dtm_train_tfidf = fit_transform(dtm_train, tfidf)
 
+# Make to matrix
+dim(dtm_train_tfidf) = c(dim(train)[1],length(dtm_train_tfidf)/dim(train)[1])
+
+# Set names of column
+colnames(dtm_train_tfidf) = pruned_vocab$term
+
 # Same to test
 it_test=itoken(test.clean$text, tokenizer=word_tokenizer,ids=test.clean$post.id)
 dtm_test_tfidf = create_dtm(it_test, vectorizer)
-dtm_test_tfidf=transform(dtm_test_tfidf, tfidf)
+dtm_test_tfidf= fit_transform(dtm_test_tfidf, tfidf)
+dim(dtm_test_tfidf) = c(dim(test)[1],length(dtm_test_tfidf)/dim(test)[1])
+colnames(dtm_test_tfidf) = pruned_vocab$term
 
 # Use glm to make a linear model with LASSO regression (alpha=1)
 # This also performs cross-validation and solves for the optimal
 # lambda value. It's a neat package.
 # Calculate the "mae", mean absolute error and optimize for it
-glm_model = cv.glm(x=dtm_train_tfidf,y=train.clean$age,alpha=1,type.measure="mae")
+y = df$age
+
+library(glmnet)
+library(doParallel)
+registerDoParallel(detectCores()-2)
+gc()
+glm_model = cv.glmnet(dtm_train_tfidf,y,alpha=1,type.measure="mae",parallel=TRUE)
 plot(glm_model)
 
 # Calcualted lambda value
 lam=glm_model$lambda.min
-# [1] 0.0005819068
+lam
 
 # Coefficients of model given optimal lambda
-coef(glm_model, s="lambda.min")
-print(glm_model$glm.fit)
+co=coef(glm_model, s="lambda.min")
+print(glm_model$glmnet.fit)
 
 # Make predictions on the data
 pred=predict(glm_model, dtm_test_tfidf, type="response", s=lam)
+hist(pred)
+
+# QQ for residuals
+qqnorm(pred)
+qqline(pred)
 
 # Exponentiate to recover age values
 pred = exp(pred)
-
-# If there are any extreme outliers bring them back into the range
-pred[pred<13] = 13
-pred[pred>48] = 48
 hist(pred)
+qqnorm(pred)
+qqline(pred)
 
 # Return the data frame in the format kaggle likes
 out = data.frame(user.id=tst$user.id, age=pred)
 names(out) = c("user.id", "age")
 # Don't forget to take the mean of estimated ages!
 means = ddply(out, ~user.id, summarise, age=mean(age))
-means$age = round(means$age)
+median = ddply(out, ~user.id, summarise, age=median(age))
 hist(means$age, breaks=100)
+hist(median$age, breaks=100)
+qqnorm(means$age)
+qqline(means$age)
+
+# # If there are any extreme outliers bring them back into the range
+# means$age[means$age<13] = 13
+# means$age[means$age>17 & means$age<20] = 17
+# means$age[means$age>20 & means$age<23] = 23
+# means$age[means$age>27 & means$age<30] = 27
+# means$age[means$age>30 & means$age<33] = 33
+# means$age[means$age>48] = 48
+# hist(means$age, breaks=100)
 
 # Write csv.
-write.csv(means, "test_output_6.csv", row.names = FALSE)
-# Best score so far, I'll work on this later.
+write.csv(median, "test_output_8_median.csv", row.names = FALSE)
