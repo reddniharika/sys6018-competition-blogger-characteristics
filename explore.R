@@ -185,13 +185,23 @@ unlist(lapply(train.new, class))
 train.new$text = as.character(train.new$text)
 class(train.new$text)
 
-## EXPERIMENTAL ##
 # https://m-clark.github.io/text-analysis-with-R/part-of-speech-tagging.html
 # Part of speech tagging
 # Make sure to have Java installed
-install.packages(openNLPmodels.en)
-library("openNLP")
-library("openNLPmodels.en")
+library(openNLP)
+library(tm)
+library(stringr)
+library(plyr)
+library(SnowballC)
+library(data.table)
+library(pacman)
+
+
+## EXPERIMENTAL ##
+
+pos = c("CC","CD","DT","EX","FW","IN","JJ","JJR","JJS","LS","MD","NN","NNS","NNP",
+        "NNPS","PDT","POR","PRP","PRP$","RB","RBR","RBS","RP","SYM","TO","UH",
+        "VB","VBD","VBG","VBN","VBP","VBZ","WDT","WP","WP$","WRB")
 
 count_pos = function(string) {
   initial_result = string %>% 
@@ -200,21 +210,45 @@ count_pos = function(string) {
     annotate(string, Maxent_POS_Tag_Annotator(), .) %>% 
     subset(type=='word') 
   
-  sapply(initial_result$features , '[[', "POS") %>% table
-  
+  out = sapply(initial_result$features , '[[', "POS") %>% table %>% as.data.frame
+  df = data.frame(matrix(NA, nrow=1,ncol=length(pos)))
+  colnames(df) = pos
+  merge(df, out, all.x=TRUE)
+  out
 }
 
-count_pos(const)
+library(lattice)
+txt_freq
 
-## END EXPERIMENTAL ##
+temp = lapply(train.new$text[1:2], count_pos)
+temp
 
 
+sample=c(train.new$text[1:5])
+as_word_tag(sample)
+
+corp = Corpus(VectorSource(train.new$text[1:5]))
+dtm = DocumentTermMatrix(corp, control=list(wordLengths=c(1,20)))
+inspect(dtm)
+
+# Get the POS counts for each document
+allcounts=lapply(train.new$text[1:2], count_pos)
+allcounts
+
+# Get the names of all parts of speech
+allpos = unique(unlist(lapply(allcounts, names)))
+allpos
+
+# Temp matrix
+mat = Matrix(nrow=0,ncol=length(allpos))
+colnames(mat) = allpos
+mat
+
+temp = reduce(allcounts, full_join, by = "ID")
+
+## EXPERIMENTAL END ##
 
 # Now clean the text
-library(tm)
-library(stringr)
-library(plyr)
-library(SnowballC)
 
 # Setup a temporary dataframe as to not override the old one
 train.clean = train.new
@@ -468,6 +502,21 @@ names(tst) = c("post.id.","user.id.","gender.","topic.", "sign.","date.",
                  "char.1.","char.2.","num.","upper.","punct.","ch.",
                  "n.","u.","p.")
 
+library(dummies)
+train_dum_1=dummy(df[,c("gender.")])
+train_dum_2=dummy(df[,c("sign.")])
+train_dum_3=dummy(df[,c("topic.")])
+train_dum=cbind(train_dum_1,train_dum_2,train_dum_3)
+colnames(train_dum)=c(levels(df$gender.),levels(df$sign.),levels(df$topic.))
+train_dum_sparse = Matrix(train_dum, sparse=TRUE)
+
+test_dum_1=dummy(tst[,c("gender.")])
+test_dum_2=dummy(tst[,c("sign.")])
+test_dum_3=dummy(tst[,c("topic.")])
+test_dum=cbind(test_dum_1,test_dum_2,test_dum_3)
+colnames(test_dum)=c(levels(tst$gender.),levels(tst$sign.),levels(tst$topic.))
+test_dum_sparse = Matrix(test_dum, sparse=TRUE)
+
 #
 # Check models in exploreOLD.R that were attempted.
 # They should fit in here
@@ -635,13 +684,16 @@ colnames(dtm_test_tfidf) = pruned_vocab$term
 # This also performs cross-validation and solves for the optimal
 # lambda value. It's a neat package.
 # Calculate the "mae", mean absolute error and optimize for it
+train_X = cbind(dtm_train_tfidf,train_dum_sparse)
+test_X = cbind(dtm_test_tfidf,test_dum_sparse)
+
 y = df$age
 
 library(glmnet)
 library(doParallel)
 registerDoParallel(detectCores()-2)
 gc()
-glm_model = cv.glmnet(dtm_train_tfidf,y,alpha=1,type.measure="mae",parallel=TRUE)
+glm_model = cv.glmnet(train_X,y,alpha=1,type.measure="mae",parallel=TRUE)
 plot(glm_model)
 
 # Calcualted lambda value
@@ -653,7 +705,7 @@ co=coef(glm_model, s="lambda.min")
 print(glm_model$glmnet.fit)
 
 # Make predictions on the data
-pred=predict(glm_model, dtm_test_tfidf, type="response", s=lam)
+pred=predict(glm_model, test_X, type="response", s=lam)
 hist(pred)
 
 # QQ for residuals
@@ -677,14 +729,5 @@ hist(median$age, breaks=100)
 qqnorm(means$age)
 qqline(means$age)
 
-# # If there are any extreme outliers bring them back into the range
-# means$age[means$age<13] = 13
-# means$age[means$age>17 & means$age<20] = 17
-# means$age[means$age>20 & means$age<23] = 23
-# means$age[means$age>27 & means$age<30] = 27
-# means$age[means$age>30 & means$age<33] = 33
-# means$age[means$age>48] = 48
-# hist(means$age, breaks=100)
-
 # Write csv.
-write.csv(median, "test_output_8_median.csv", row.names = FALSE)
+write.csv(median, "test_output_experimental_1_median.csv", row.names = FALSE)
