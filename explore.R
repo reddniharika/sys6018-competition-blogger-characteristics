@@ -192,59 +192,53 @@ library(openNLP)
 library(tm)
 library(stringr)
 library(plyr)
-library(SnowballC)
-library(data.table)
-library(pacman)
+
 
 
 ## EXPERIMENTAL ##
 
-pos = c("CC","CD","DT","EX","FW","IN","JJ","JJR","JJS","LS","MD","NN","NNS","NNP",
-        "NNPS","PDT","POR","PRP","PRP$","RB","RBR","RBS","RP","SYM","TO","UH",
-        "VB","VBD","VBG","VBN","VBP","VBZ","WDT","WP","WP$","WRB")
-
-count_pos = function(string) {
-  initial_result = string %>% 
-    annotate(list(Maxent_Sent_Token_Annotator(),
-                  Maxent_Word_Token_Annotator())) %>% 
-    annotate(string, Maxent_POS_Tag_Annotator(), .) %>% 
-    subset(type=='word') 
-  
-  out = sapply(initial_result$features , '[[', "POS") %>% table %>% as.data.frame
-  df = data.frame(matrix(NA, nrow=1,ncol=length(pos)))
-  colnames(df) = pos
-  merge(df, out, all.x=TRUE)
-  out
+# Annotation function
+annot = function(string) {
+  # Convert to string
+  s = as.String(string)
+  # Initialize tokenizer  
+  token = Maxent_Word_Token_Annotator()
+  # Identify sentence and get start/end lengths
+  a2 = Annotation(1L, "sentence", 1L, nchar(s))
+  # Aplit into words and get their positions
+  a2 = annotate(s, token, a2)
+  # Get POS
+  a3 = annotate(s, Maxent_POS_Tag_Annotator(), a2)
+  # Get dataframe of only words
+  a3w = a3[a3$type == "word"]
+  # Get tags
+  unlist(lapply(a3w$features, `[[`, "POS"))
 }
 
-library(lattice)
-txt_freq
+corp = function(inp){
+  all.text = Corpus(VectorSource(inp))
+  spar=DocumentTermMatrix(all.text, control=list(wordLengths=c(1,Inf)))
+  temp = matrix(spar)
+  rownames(temp) = spar$dimnames$Terms
+  t(temp)
+}
 
-temp = lapply(train.new$text[1:2], count_pos)
-temp
+string = train.new$text[1:5]
+string.mat = matrix(unlist(string), byrow=TRUE)
+inp = apply(string.mat, 1, function(x) paste(annot(x), collapse=" "))
+inp.mat = matrix(unlist(inp), byrow=TRUE)
+pos = apply(inp.mat, 1, function(x) corp(x))
 
 
-sample=c(train.new$text[1:5])
-as_word_tag(sample)
 
-corp = Corpus(VectorSource(train.new$text[1:5]))
-dtm = DocumentTermMatrix(corp, control=list(wordLengths=c(1,20)))
-inspect(dtm)
+post.mat = 
 
-# Get the POS counts for each document
-allcounts=lapply(train.new$text[1:2], count_pos)
-allcounts
+train.pos=corp(inp)
+dim(out)
 
-# Get the names of all parts of speech
-allpos = unique(unlist(lapply(allcounts, names)))
-allpos
-
-# Temp matrix
-mat = Matrix(nrow=0,ncol=length(allpos))
-colnames(mat) = allpos
-mat
-
-temp = reduce(allcounts, full_join, by = "ID")
+# pos = c("CC","CD","DT","EX","FW","IN","JJ","JJR","JJS","LS","MD","NN","NNS","NNP",
+#         "NNPS","PDT","POR","PRP","PRP$","RB","RBR","RBS","RP","SYM","TO","UH",
+#         "VB","VBD","VBG","VBN","VBP","VBZ","WDT","WP","WP$","WRB")
 
 ## EXPERIMENTAL END ##
 
@@ -641,6 +635,11 @@ key.words = unique(c(n.1,n.2,n.3))
 # it should be useful.
 
 # Let's try another method using the text2vec package
+#
+#
+# This is the core of the program
+#
+#
 
 # https://cran.r-project.org/web/packages/text2vec/vignettes/text-vectorization.html
 install.packages("text2vec")
@@ -687,13 +686,21 @@ colnames(dtm_test_tfidf) = pruned_vocab$term
 train_X = cbind(dtm_train_tfidf,train_dum_sparse)
 test_X = cbind(dtm_test_tfidf,test_dum_sparse)
 
-y = df$age
+
+# Here is where you can modify age.
+y = exp(df$age)
+y.mod = y
+
+hist(y, breaks=100)
+hist(y.mod, breaks=100)
+
+###
 
 library(glmnet)
 library(doParallel)
 registerDoParallel(detectCores()-2)
 gc()
-glm_model = cv.glmnet(train_X,y,alpha=1,type.measure="mae",parallel=TRUE)
+glm_model = cv.glmnet(train_X,y.mod,alpha=1,type.measure="mae",parallel=TRUE)
 plot(glm_model)
 
 # Calcualted lambda value
@@ -712,9 +719,9 @@ hist(pred)
 qqnorm(pred)
 qqline(pred)
 
-# Exponentiate to recover age values
+# Inverse transformation used on y or y.mod
 pred = exp(pred)
-hist(pred)
+hist(pred, breaks=100)
 qqnorm(pred)
 qqline(pred)
 
