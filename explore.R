@@ -10,11 +10,7 @@
 # Setup prior to running
 
 # Install these packages IF NEEDED
-install.packages("tm", "tidyverse", "snow", "SnowballC","e1071","glmnet","text2vec", "glmnet", "doParallel", "Matrix", "dummies")
-
-# Set up enough memory for Java
-# Note that this is used for the experimental Java POS tagger
-options(java.parameters = "-Xmx15000m")
+install.packages("tm", "tidyverse", "snow", "SnowballC","e1071","glmnet","text2vec", "glmnet", "doParallel", "Matrix", "dummies", "parallel")
 
 # General use package
 library(tidyverse)
@@ -673,22 +669,125 @@ colnames(dtm_train_tfidf) = pruned_vocab$term
 
 # Same to test
 it_test=itoken(test.clean$text, tokenizer=word_tokenizer,ids=test.clean$post.id)
-dtm_test_tfidf = create_dtm(it_test, vectorizer)
-dtm_test_tfidf= fit_transform(dtm_test_tfidf, tfidf)
+dtm_test = create_dtm(it_test, vectorizer)
+dtm_test_tfidf= fit_transform(dtm_test, tfidf)
 dim(dtm_test_tfidf) = c(dim(test.clean)[1],length(dtm_test_tfidf)/dim(test.clean)[1])
 colnames(dtm_test_tfidf) = pruned_vocab$term
 
-# Use glm to make a linear model with LASSO regression (alpha=1)
-# This also performs cross-validation and solves for the optimal
-# lambda value. It's a neat package.
-# Calculate the "mae", mean absolute error and optimize for it
-train_X = cbind(dtm_train_tfidf,train_dum_sparse)
-test_X = cbind(dtm_test_tfidf,test_dum_sparse)
+# Sentiment analysis
+library(syuzhet)
+senti_train = get_nrc_sentiment(as.character(train.new$text))
+senti_train_prop = senti_train/rowSums(senti_train)
+senti_train_prop_sparse = Matrix(as.matrix(senti_train_prop))
 
-# Here is where you can modify age.
-y.mod = log(df$age.)
-par(mfrow=c(1,1))
-hist(y.mod, breaks=100)
+senti_test = get_nrc_sentiment(as.character(test.new$text))
+senti_test_prop = senti_test/rowSums(senti_test)
+senti_test_prop_sparse = Matrix(as.matrix(senti_test_prop))
+
+###
+# Let's keep going #
+###
+
+# https://m-clark.github.io/text-analysis-with-R/part-of-speech-tagging.html
+# https://datascience.stackexchange.com/questions/5316/general-approach-to-extract-key-text-from-sentence-nlp
+# Part of speech tagging
+
+# Initialize tokenizer  
+sent_token_annotator = Maxent_Sent_Token_Annotator()
+word_token_annotator = Maxent_Word_Token_Annotator()
+pos_tag_annotator = Maxent_POS_Tag_Annotator()
+pos = c("CC","CD","DT","EX","FW","IN","JJ","JJR","JJS","LS","MD","NN","NNS","NNP",
+        "NNPS","PDT","POR","PRP","PRP$","RB","RBR","RBS","RP","SYM","TO","UH",
+        "VB","VBD","VBG","VBN","VBP","VBZ","WDT","WP","WP$","WRB")
+
+# Annotation function
+annot = function(string) {
+  a2 = annotate(string, list(sent_token_annotator, word_token_annotator))
+  a3 = annotate(string, pos_tag_annotator, a2)
+  a3w = subset(a3, type=="word")
+  sapply(a3w$features, "[[", "POS")[1]
+}
+
+# Get the column names
+length(colnames(dtm_train))
+col_pos = unlist(lapply(colnames(dtm_train), annot))
+length(col_pos)
+# Replace all "." with "NA" and "$" with "D"
+col_pos = replace(col_pos, col_pos==".", "NA")
+col_pos = replace(col_pos, col_pos=="PRP$", "PRPD")
+col_pos = replace(col_pos, col_pos=="WP$", "WPD")
+table(col_pos)
+length(col_pos)
+
+# Get a dtm table with new column names
+dtm_pos_train = dtm_train
+colnames(dtm_pos_train) = col_pos
+
+# Get unique column names
+uni = unique(col_pos)
+
+# Initialize matrix
+outmat = Matrix(nrow=dim(dtm_pos_train)[1], ncol=0)
+
+# Calculate rowsums for same column names
+for (pos in uni) {
+  print(pos)
+  if (pos != "TO" & pos!="WPD") {
+    index = colnames(dtm_pos_train)==pos
+    somecol = Matrix(rowSums(dtm_pos_train[,index]))
+    outmat = cbind(outmat, somecol)
+  } else if (pos=="TO") {
+    outmat = cbind(outmat, dtm_pos_train[,"TO"])
+  } else if (pos=="WPD") {
+    outmat = cbind(outmat, dtm_pos_train[,"WPD"])
+  }
+}
+# Set column names
+colnames(outmat) = uni
+
+# Repeat to test
+length(colnames(dtm_test))
+# Could this be redundant?
+col_pos = unlist(lapply(colnames(dtm_test), annot))
+length(col_pos)
+col_pos = replace(col_pos, col_pos==".", "NA")
+col_pos = replace(col_pos, col_pos=="PRP$", "PRPD")
+col_pos = replace(col_pos, col_pos=="WP$", "WPD")
+table(col_pos)
+length(col_pos)
+dtm_pos_test = dtm_test
+colnames(dtm_pos_test) = col_pos
+uni.test = unique(col_pos)
+outmat.test = Matrix(nrow=dim(dtm_pos_test)[1], ncol=0)
+for (pos in uni) {
+  print(pos)
+  if (pos != "TO" & pos!="WPD") {
+    index = colnames(dtm_pos_test)==pos
+    somecol = Matrix(rowSums(dtm_pos_test[,index]))
+    outmat.test = cbind(outmat.test, somecol)
+  } else if (pos=="TO") {
+    outmat.test = cbind(outmat.test, dtm_pos_test[,"TO"])
+  } else if (pos=="WPD") {
+    outmat.test = cbind(outmat.test, dtm_pos_test[,"WPD"])
+  }
+}
+colnames(outmat.test) = uni
+
+# Get proportions
+outmat = outmat/rowSums(outmat)
+outmat.test = outmat.test/rowSums(outmat.test)
+
+# All done
+dim(outmat)
+dim(outmat.test)
+
+# Bring all the predictors together
+train_X = cbind(dtm_train_tfidf,train_dum_sparse,senti_train_prop_sparse,outmat)
+test_X = cbind(dtm_test_tfidf,test_dum_sparse,senti_test_prop_sparse,outmat.test)
+
+# Check the dimension
+dim(train_X)
+dim(test_X)
 
 # Parallel Processing
 
@@ -700,13 +799,29 @@ hist(y.mod, breaks=100)
 # WEAKER SYSTEMS!!!!                 #
 ######################################
 
+# Here is where you can modify age.
+skewness(df$age.)
+lambda = -.67
+y.mod = (df$age.**lambda-1)/lambda
+skewness(y.mod)
+par(mfrow=c(1,1))
+hist(y.mod, breaks=100)
+
 library(glmnet)
 library(doParallel)
+library(parallel)
+
 registerDoParallel(detectCores())
 gc()
-# Alpha == 1 indicates LASSO. We will not use this and instead use Alpha==0.
+# Alpha == 1 indicates LASSO. We will not use this and instead use Alpha==0
+# for ridge regression.
 glm_model = cv.glmnet(train_X,y.mod,alpha=0,type.measure="mae",parallel=TRUE)
 plot(glm_model)
+min(glm_model$cvm)
+
+# Alpha LogMAE   MAE box-cox
+#     0  0.156 3.889   0.019
+#     1  0.160 4.058
 
 # Calcualted lambda value. This value determines which variables have their
 # weights set to 0. Smaller lambda = use more variables.
@@ -722,7 +837,16 @@ pred=predict(glm_model, test_X, type="response", s=lam)
 hist(pred, breaks=100)
 
 # Inverse transformation used on y or y.mod
-pred=exp(pred)
+
+# This is for no transform
+# pred = pred
+
+# This is for log
+# pred=exp(pred)
+
+# This is for boxcox
+pred=(pred*lambda+1)**(1/lambda)
+
 hist(pred, breaks=100)
 qqnorm(pred)
 qqline(pred)
@@ -732,10 +856,9 @@ out = data.frame(user.id=tst$user.id, age=pred)
 names(out) = c("user.id", "age")
 
 # Some naive transformations
-out$age[out$age<14] = 14
+out$age[out$age<13] = 13
 out$age[out$age>48] = 48
 hist(out$age, breaks=100)
-
 
 # Naive transformation. Simply the age doesnt fit the orignial categories,
 # push them into the closest age group.
@@ -745,73 +868,31 @@ out$age[out$age>27 & out$age<30] = 27
 out$age[out$age>30 & out$age<33] = 33
 hist(out$age, breaks=100)
 
+# # Not-so-naive transformation. Set the age to the median of the most likely group
+# table(train$age)
+# #   13    14    15    16    17    23    24    25    26    27    33    34    35    36    37    38    39    40    41    42    43    44    45    46    47    48 
+# # 9597 19615 27595 49818 53315 47195 54102 43920 35244 31448 10713  7896 10398  8935  6484  4298  3505  4194  2801  1262  2049  1597  3065  1157  1568  1190 
+# median(train$age[train$age<=17])
+# # [1] 16
+# median(train$age[train$age>=23 & train$age<=27])
+# # [1] 25
+# median(train$age[train$age>=33])
+# # [1] 36
+# 
+# # Find the cutoffs between these ranges
+# c1=mean(train$age[train$age>=16 & train$age<=25])
+# # [1] 20.879
+# c2=mean(train$age[train$age>=25 & train$age<=36])
+# # [1] 28.077
+# 
+# # Make the transformations
+# out$age[out$age>17 & out$age<c1] = 16
+# out$age[out$age>c1 & out$age<23] = 25
+# out$age[out$age>27 & out$age<c2] = 25
+# out$age[out$age>c2 & out$age<33] = 36
+# 
+# # This ends up being a more centered distribution
+# hist(out$age, breaks=100)
+
 # Write csv.
-write.csv(out, "agg_5_alpha_0.csv", row.names = FALSE)
-
-###
-# Let's keep going #
-                 ###
-
-## EXPERIMENTAL ##
-## CODE PAST THIS LINE SHOULD THEORETICALLY WORK BUT THE PROCESSING TIME
-## IS JUST TOO LARGE FOR SOME REASON. I HAVEN'T IMPLEMENTED THIS FOR THIS REASON
-## FOR REFERENCE, DO NOT EXPECT THIS CODE TO PROCESS YOUR TRAINING SET IN UNDER
-## 8-12 HOURS.
-
-# https://m-clark.github.io/text-analysis-with-R/part-of-speech-tagging.html
-# https://datascience.stackexchange.com/questions/5316/general-approach-to-extract-key-text-from-sentence-nlp
-# Part of speech tagging
-# Make sure to have Java installed
-
-# Initialize tokenizer  
-token = Maxent_Word_Token_Annotator()
-posanno = Maxent_POS_Tag_Annotator()
-
-# Annotation function
-annot = function(string) {
-  # Convert to string
-  s = as.String(string)
-  # Identify sentence and get start/end lengths
-  a2 = Annotation(1L, "sentence", 1L, nchar(s))
-  # Split into words and get their positions
-  a2 = annotate(s, token, a2)
-  if ("word" %in% a2$type){
-    # Get POS
-    a3 = annotate(s, posanno, a2)
-    # Get dataframe of only words
-    a3w = a3[a3$type == "word"]
-    # Get tags
-    out = unlist(lapply(a3w$features, `[[`, "POS"))
-  }
-  else {
-    out = ""
-  }
-  out
-}
-
-corp = function(inp){
-  all.text = Corpus(VectorSource(inp))
-  DocumentTermMatrix(all.text, control=list(wordLengths=c(1,Inf)))
-}
-
-# Generate this by parts
-string = train.new$text[1:10]
-string.mat = matrix(unlist(string), byrow=TRUE)
-cls = detectCores()
-cls = makeCluster(cls)
-clusterExport(cls, list("annot","as.String","Maxent_Word_Token_Annotator","Annotation","annotate",
-                        "Maxent_POS_Tag_Annotator"))
-inp = parApply(cls, string.mat, 1, function(x) paste(annot(x), collapse=" "))
-inp.mat = matrix(unlist(inp), byrow=TRUE)
-pos = corp(inp.mat)
-pos.sparse = corp(inp.mat)
-dim(pos.sparse)
-
-# Write as matrix
-write.csv(as.matrix(pos.sparse), "pos_sparse_1.csv",row.names=FALSE)
-
-# pos = c("CC","CD","DT","EX","FW","IN","JJ","JJR","JJS","LS","MD","NN","NNS","NNP",
-#         "NNPS","PDT","POR","PRP","PRP$","RB","RBR","RBS","RP","SYM","TO","UH",
-#         "VB","VBD","VBG","VBN","VBP","VBZ","WDT","WP","WP$","WRB")
-
-## EXPERIMENTAL END ##
+write.csv(out, "final_1.csv", row.names = FALSE)
